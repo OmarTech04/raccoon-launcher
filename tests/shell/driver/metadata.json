@@ -1,0 +1,6 @@
+{
+  "uuid": "raccoon-test-driver@local",
+  "name": "Raccoon Launcher test driver",
+  "description": "Test-only. Drives the real Raccoon Launcher extension inside a private headless GNOME Shell (tools/smoketest.sh). Never install this in a real session.",
+  "shell-version": ["51"]
+}

@@ -1,0 +1,8 @@
+<!doctype html>
+<!-- Precondition check: does compositor keyboard input reach Firefox? -->
+<html><head><meta charset="utf-8"><title>KEYTEST</title></head>
+<body><input id="i" autofocus><script>
+document.getElementById('i').focus();
+addEventListener('keydown', e => { document.title = `${document.title} KEY ${e.key}`; });
+addEventListener('focus', () => { document.title = `${document.title} +F`; });
+</script></body></html>

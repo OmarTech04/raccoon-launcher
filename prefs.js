@@ -35,6 +35,8 @@ export default class RaccoonLauncherPrefs extends ExtensionPreferences {
         addToggle('enable-calc', 'Calculator', 'Type a math expression to evaluate it');
         addToggle('enable-web', 'Web search', 'Prefixes: g, ddg, yt, wiki, gh');
         addToggle('enable-system', 'System actions', 'Lock, log out, suspend, restart, power off');
+        addToggle('enable-ai', 'AI mode', 'Type "c " and a question; Enter opens a ChatGPT Temporary Chat in Firefox');
+        addToggle('enable-files', 'File search', 'Type "ff " and part of a filename to search your home folder');
 
         // --- Behaviour --------------------------------------------------
         const behaviour = new Adw.PreferencesGroup({title: 'Behaviour'});

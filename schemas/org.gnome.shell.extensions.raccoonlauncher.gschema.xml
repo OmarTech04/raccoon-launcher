@@ -36,6 +36,20 @@
       <summary>Enable system actions</summary>
     </key>
 
+    <key name="enable-ai" type="b">
+      <default>true</default>
+      <summary>Enable AI mode</summary>
+      <description>Typing "c " followed by a question and pressing Enter opens a
+      new ChatGPT Temporary Chat in Firefox and submits the question.</description>
+    </key>
+
+    <key name="enable-files" type="b">
+      <default>true</default>
+      <summary>Enable file search</summary>
+      <description>Typing "ff " followed by part of a filename searches the
+      home directory (hidden files and folders are skipped).</description>
+    </key>
+
     <key name="max-results" type="i">
       <default>8</default>
       <range min="3" max="20"/>

@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Test-only stand-in for the ChatGPT composer, used by the headless
+     Firefox runtime test. It mimics the observed real behaviour: the title
+     says "ChatGPT", the composer is prefilled from ?q= after a short
+     "hydration" delay, and Enter submits a non-empty composer and clears it.
+     Each submission is reported through the window title. -->
+<html><head><meta charset="utf-8"><title>ChatGPT</title></head>
+<body>
+<p id="mode"></p>
+<textarea id="composer" rows="4" cols="60"></textarea>
+<script>
+const params = new URLSearchParams(location.search);
+document.getElementById('mode').textContent =
+    params.get('temporary-chat') === 'true' ? 'Temporary chat' : 'Regular chat';
+let count = 0;
+const box = document.getElementById('composer');
+setTimeout(() => {
+    box.value = params.get('q') ?? '';
+    box.focus();
+}, 700);
+box.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey)
+        return;
+    e.preventDefault();
+    if (!box.value.trim())
+        return;
+    count++;
+    document.title = `SUBMITTED ${count} ${params.get('temporary-chat') === 'true' ? 'TEMP' : 'REGULAR'}: ${box.value}`;
+    box.value = '';
+});
+</script>
+</body></html>

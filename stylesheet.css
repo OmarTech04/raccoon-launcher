@@ -75,3 +75,45 @@
     font-size: 11px;
     color: rgba(255, 255, 255, 0.6);
 }
+
+/* Explicit modes: "c " (AI) and "ff " (files). */
+.raccoon-box.raccoon-mode-ai {
+    border-color: rgba(16, 163, 127, 0.7);
+}
+
+.raccoon-box.raccoon-mode-files {
+    border-color: rgba(120, 150, 255, 0.7);
+}
+
+.raccoon-mode-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.raccoon-mode-ai .raccoon-mode-badge {
+    background-color: rgba(16, 163, 127, 0.85);
+}
+
+.raccoon-mode-files .raccoon-mode-badge {
+    background-color: rgba(90, 120, 230, 0.85);
+}
+
+.raccoon-hint {
+    margin-top: 8px;
+    padding: 0 4px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.raccoon-hint.loading {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.raccoon-hint.error,
+.raccoon-hint.disabled {
+    color: #ffb4a8;
+}

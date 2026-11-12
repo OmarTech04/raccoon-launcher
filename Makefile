@@ -1,44 +1,51 @@
-UUID    = raccoonlauncher@shimafallah.github.io
-EXT_DIR = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
-SOURCES = metadata.json extension.js prefs.js stylesheet.css lib schemas
+UUID      = raccoonlauncher@shimafallah.github.io
+DATA_HOME = $(or $(XDG_DATA_HOME),$(HOME)/.local/share)
+EXT_DIR   = $(DATA_HOME)/gnome-shell/extensions/$(UUID)
 
-.PHONY: schemas install uninstall pack lint nested test
+.PHONY: schemas install uninstall pack check lint unit test test-firefox nested
 
 # Compile the GSettings schema (needed before the extension can load).
 schemas:
-	glib-compile-schemas schemas/
+	glib-compile-schemas --strict schemas/
 
-# Copy the extension into the local extensions directory.
-install: schemas
-	rm -rf "$(EXT_DIR)"
-	mkdir -p "$(EXT_DIR)"
-	cp -r $(SOURCES) "$(EXT_DIR)/"
+# Copy the runtime files into the local extensions directory
+# ($XDG_DATA_HOME, falling back to ~/.local/share).
+install:
+	./tools/install.sh "$(EXT_DIR)"
 	@echo "Installed to $(EXT_DIR)"
 	@echo "Enable with: gnome-extensions enable $(UUID)"
-	@echo "On Wayland you must log out and back in (or use 'make nested')."
+	@echo "On Wayland, log out and back in first so GNOME Shell discovers it."
 
 uninstall:
 	rm -rf "$(EXT_DIR)"
 	@echo "Removed $(EXT_DIR)"
 
-# Build the zip you upload to extensions.gnome.org.
+# Build the installable zip (all of lib/, including providers).
 pack: schemas
 	gnome-extensions pack --force --extra-source=lib .
 	@echo "Created $(UUID).shell-extension.zip"
 
-# Syntax-check every JS file.
+# Schema validation, ES-module syntax, unit tests and zip contents.
+check:
+	./tools/check.sh all
+
+# ES-module syntax / import-resolution check only.
 lint:
-	@for f in extension.js prefs.js $$(find lib -name '*.js'); do \
-		echo "checking $$f"; \
-		gjs -c "$$(cat $$f)" >/dev/null || exit 1; \
-	done
-	@echo "OK"
+	./tools/check.sh syntax
+
+# Unit tests only (plain gjs, no GNOME Shell).
+unit:
+	./tools/check.sh unit
 
 # Launch a nested GNOME Shell for manual testing (GNOME 49+ uses --devkit;
 # needs the mutter-devkit viewer installed). For automated checks use 'make test'.
 nested:
 	dbus-run-session -- gnome-shell --devkit
 
-# Load the extension in a private headless shell and verify open/close work.
+# Load the real extension in a private headless shell and drive it.
 test:
 	./tools/smoketest.sh
+
+# As above, plus real Firefox (disposable profile, local stand-in pages).
+test-firefox:
+	./tools/smoketest.sh --firefox
