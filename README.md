@@ -22,10 +22,12 @@ Default shortcut: <kbd>Ctrl</kbd>+<kbd>Space</kbd> (configurable in preferences)
 | `g`, `ddg`, `yt`, `wiki`, `gh` + query | Web search in the default browser | See below |
 | `lock`, `log out`, `suspend`, `restart`, `power off` | System actions (GNOME's own confirmation dialogs) | Offered results tested; actions not triggered in tests |
 | `ff <name>` | Filename search in your home folder | Tested (headless GNOME 51 + unit tests) |
+| `/<name>` | Folder-name search in your home folder | Tested (headless GNOME 51 + unit tests) |
+| Copy button / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> on a file or folder result | Copy the item to paste in GNOME Files | Tested, including a real paste in GNOME Files 51 in the headless sandbox |
 | `c <question>` | ChatGPT Temporary Chat in Firefox | **Incomplete — not yet verified end-to-end** |
 
-Preferences: shortcut, box color, per-provider toggles (including AI mode and
-file search), and the maximum number of results.
+Preferences: shortcut, box color, per-provider toggles (including AI mode,
+file search and folder search), and the maximum number of results.
 
 ### Web search (`g <query>`, …)
 
@@ -63,6 +65,48 @@ landed in the normal window. Not yet observed in the real session.
 - The search is asynchronous (Gio, a few folders at a time), debounced while
   you type, cancelled when the text changes or the launcher closes, and capped
   at 400 000 entries / 8 seconds; when a cap is hit the launcher says so.
+
+### Folder search (`/<name>`)
+
+- A leading `/` switches to folder mode immediately — no space needed. `/`
+  alone shows guidance and searches nothing; `/projects` and `/ projects`
+  both look for folders whose names contain "projects".
+- `/` is a mode prefix, not a path: only the first slash is removed, and
+  absolute paths are not browsed. A slash inside another mode stays part of
+  the query (`c /projects` asks ChatGPT about "/projects"; `ff /projects`
+  is a file search).
+- Uses the same search as `ff` (names, all words, ranking, Unicode/Arabic,
+  `max-results`, debounce, cancellation and limits) but returns **only real
+  folders**: files, symbolic links, hidden folders and anything inside them
+  are excluded. Matching files never take up result slots, and folders nested
+  below non-matching ones are found.
+- Results show the folder name, its parent path and a folder icon; Enter
+  opens the folder in the default file manager.
+- Has its own switch in preferences ("Folder search", on by default),
+  independent of file search. When it is off, `/` shows that it is disabled
+  instead of falling back to other results.
+
+### Copying files and folders for GNOME Files
+
+File and folder results (`ff` and `/`) have a **Copy** button on the right,
+and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies the selected one.
+This copies the item itself — paste it in GNOME Files (<kbd>Ctrl</kbd>+<kbd>V</kbd>)
+to get a copy there. It does not copy the path as text or the contents, and
+nothing is created until you paste.
+
+- The launcher stays open and shows "Copied “name” — paste in Files."
+  Copying never opens the item; Enter or clicking the result still opens it.
+- Other results (apps, calculator, web, AI, system) have no Copy action, and
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> does nothing for them. Plain
+  <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> still copy and
+  paste text in the search box.
+- The clipboard gets one entry: MIME type `x-special/gnome-copied-files` with
+  `copy\n<file URI>`, the format GNOME Files uses itself. The file's own
+  percent-encoded URI is used as-is, so spaces, Arabic and punctuation in
+  names are preserved. It stays on the clipboard after the launcher closes.
+- Folders are copied the same way (GNOME Files copies the whole folder).
+- Only GNOME Files' format is offered. Other file managers or apps that
+  expect `text/uri-list` may not accept the paste.
 
 ### AI mode (`c <question>`) — incomplete
 
@@ -141,6 +185,14 @@ make test               # ./tools/smoketest.sh: real extension in a private head
 make test-firefox       # ./tools/smoketest.sh --firefox: adds real Firefox (disposable profile)
 ```
 
+Run parts only:
+
+```bash
+./tools/check.sh unit files clipboard          # unit-test modules (query, browser, ai, files, clipboard) or name substrings
+./tools/smoketest.sh --only=folders,copy       # shell scenario groups: overlay, folders, copy, lifecycle
+./tools/smoketest.sh --only=paste              # opt-in: copy a file and paste it in GNOME Files (nautilus) in the sandbox
+```
+
 - `tools/check.sh` runs outside GNOME Shell with plain `gjs`. The syntax check
   imports each ES module and fails on syntax errors or missing local imports;
   GNOME Shell's own `resource:///` modules are expected to be unavailable
@@ -152,14 +204,23 @@ make test-firefox       # ./tools/smoketest.sh --firefox: adds real Firefox (dis
   extension (`tests/shell/driver`) into a sandbox with its own `HOME`, XDG
   directories and D-Bus session, starts `gnome-shell --headless`, and drives
   the launcher with virtual keyboard/pointer devices: modes, Enter/Escape,
-  outside click, file search, disable → re-enable. System actions are
-  looked up, never triggered. On failure the sandbox and shell log are kept.
+  outside click, file and folder search, the Copy button and
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> with clipboard readback,
+  disable → re-enable. System actions are looked up, never triggered. The
+  sandbox shell has its own clipboard, so your clipboard is not touched. On
+  failure the sandbox and shell log are kept.
+- `--only=paste` starts GNOME Files inside the sandbox, copies a temporary
+  file through the launcher, pastes it with <kbd>Ctrl</kbd>+<kbd>V</kbd> into
+  a temporary folder, and checks the copy's contents and that the original is
+  untouched. This has passed with Nautilus 51.1; pasting has not been
+  observed in a logged-in desktop session.
 - `--firefox` additionally starts Firefox inside the headless compositor with
   a throwaway profile and local stand-in pages (`tests/shell/pages`). It never
   contacts ChatGPT or uses your profile.
 
 Development dependencies: `gjs`, `gnome-shell`, `mutter` typelibs,
-`dbus-run-session`, `unzip`, and Firefox for `test-firefox`.
+`dbus-run-session`, `unzip`, Firefox for `test-firefox`, and `nautilus` for
+`--only=paste`.
 
 ## Preferences
 
@@ -183,11 +244,12 @@ stylesheet.css                overlay styling
 schemas/                      GSettings schema (shortcut, color, toggles, limits)
 lib/
   overlay.js                  the search overlay UI (modes, async results)
-  query.js                    parseQuery(): default / "c " / "ff " modes
+  query.js                    parseQuery(): default / "c " / "ff " / "/" modes
   search.js                   async dispatcher: queries providers, ranks results
   browser.js                  default-browser handling, Firefox launch arguments
   aiWindow.js                 managed AI window: identify, place, submit, Escape
   shellEnv.js                 GNOME Shell glue for browser.js / aiWindow.js
+  fileClipboard.js            copy a file URI in GNOME Files' clipboard format
   util.js                     fuzzy matcher
   providers/
     apps.js  calc.js  web.js  system.js  ai.js  files.js
