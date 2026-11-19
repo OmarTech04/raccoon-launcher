@@ -1,10 +1,12 @@
 import Gio from 'gi://Gio';
 
-import {test, assert, assertEqual, assertDeepEqual, assertRejects} from './harness.js';
+import {module, test, assert, assertEqual, assertDeepEqual, assertRejects} from './harness.js';
 import {Mode, parseQuery} from '../../lib/query.js';
 import {SearchEngine} from '../../lib/search.js';
 import {AiProvider} from '../../lib/providers/ai.js';
 import {WebProvider, ENGINES} from '../../lib/providers/web.js';
+
+module('query');
 
 // --- parseQuery ---------------------------------------------------------------
 
@@ -31,6 +33,24 @@ const PARSE_CASES = [
     ['ff تقرير', Mode.FILES, 'تقرير'],
     ['g foo', Mode.DEFAULT, 'g foo'],
     ['  firefox  ', Mode.DEFAULT, 'firefox'],
+    // Folder mode: "/" is a prefix on its own; only the first slash is removed.
+    ['/', Mode.FOLDERS, ''],
+    ['/ ', Mode.FOLDERS, ''],
+    ['/Documents', Mode.FOLDERS, 'Documents'],
+    ['/ Documents', Mode.FOLDERS, 'Documents'],
+    ['/projects  ', Mode.FOLDERS, 'projects'],
+    ['   /projects', Mode.FOLDERS, 'projects'],
+    ['/تقارير', Mode.FOLDERS, 'تقارير'],
+    ['/my projects', Mode.FOLDERS, 'my projects'],
+    ['//x', Mode.FOLDERS, '/x'],
+    ['/c hi', Mode.FOLDERS, 'c hi'],
+    ['/ff x', Mode.FOLDERS, 'ff x'],
+    // A slash inside another mode's payload stays payload text.
+    ['c /projects', Mode.AI, '/projects'],
+    ['ff /projects', Mode.FILES, '/projects'],
+    ['ff /', Mode.FILES, '/'],
+    ['g /x', Mode.DEFAULT, 'g /x'],
+    ['a/b', Mode.DEFAULT, 'a/b'],
 ];
 
 for (const [raw, mode, text] of PARSE_CASES) {
@@ -50,6 +70,7 @@ function fakeSettings(overrides = {}) {
         'enable-system': true,
         'enable-ai': true,
         'enable-files': true,
+        'enable-folders': true,
         ...overrides,
     };
     return {
@@ -195,6 +216,52 @@ test('a cancelled default query rejects with CANCELLED', async () => {
     c.cancel();
     await assertRejects(engine.query('fi', c),
         e => e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED));
+});
+
+test('folder mode routes to the files provider, directories only, with the cancellable and limit', async () => {
+    const {engine, apps, sys, files, aiQueries} = makeEngine();
+    const c = new Gio.Cancellable();
+    const r = await engine.query('  / my projects ', c);
+    assertEqual(r[0].id, 'f1');
+    assertEqual(files.calls.length, 1);
+    assertEqual(files.calls[0].text, 'my projects');
+    assertEqual(files.calls[0].opts.cancellable, c);
+    assertEqual(files.calls[0].opts.limit, 3);
+    assertEqual(files.calls[0].opts.directoriesOnly, true);
+    assertEqual(apps.calls.length + sys.calls.length + aiQueries.length, 0,
+        'no unrelated providers in folder mode');
+});
+
+test('ff mode does not request directories only', async () => {
+    const {engine, files} = makeEngine();
+    await engine.query('ff /projects');
+    assertEqual(files.calls[0].text, '/projects');
+    assert(!files.calls[0].opts.directoriesOnly);
+});
+
+test('empty "/" and "/ " query no provider', async () => {
+    const {engine, apps, files, aiQueries} = makeEngine();
+    assertDeepEqual(await engine.query('/'), []);
+    assertDeepEqual(await engine.query('/   '), []);
+    assertEqual(files.calls.length + apps.calls.length + aiQueries.length, 0);
+});
+
+test('folder and file modes are enabled independently', async () => {
+    const off = makeEngine({'enable-folders': false});
+    assertEqual(off.engine.isModeEnabled(Mode.FOLDERS), false);
+    assertEqual(off.engine.isModeEnabled(Mode.FILES), true);
+    assertDeepEqual(await off.engine.query('/projects'), []);
+    assertEqual(off.files.calls.length + off.apps.calls.length + off.sys.calls.length, 0,
+        'disabled folder mode does not fall back');
+    await off.engine.query('ff projects');
+    assertEqual(off.files.calls.length, 1, 'file mode still works');
+
+    const filesOff = makeEngine({'enable-files': false});
+    assertEqual(filesOff.engine.isModeEnabled(Mode.FOLDERS), true);
+    assertDeepEqual(await filesOff.engine.query('ff projects'), []);
+    await filesOff.engine.query('/projects');
+    assertEqual(filesOff.files.calls.length, 1);
+    assertEqual(filesOff.files.calls[0].opts.directoriesOnly, true);
 });
 
 // --- WebProvider ----------------------------------------------------------------

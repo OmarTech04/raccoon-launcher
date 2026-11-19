@@ -2,9 +2,15 @@
 import GLib from 'gi://GLib';
 
 const tests = [];
+let currentModule = '';
+
+/** Tag the tests registered after this call with a module name. */
+export function module(name) {
+    currentModule = name;
+}
 
 export function test(name, fn) {
-    tests.push({name, fn});
+    tests.push({name, fn, module: currentModule});
 }
 
 export class AssertionError extends Error {}
@@ -38,9 +44,21 @@ export async function assertRejects(promise, check, msg = 'expected rejection') 
     throw new AssertionError(msg);
 }
 
-export async function run() {
+/**
+ * Run the registered tests. With `filters`, only tests whose module name
+ * equals a filter, or whose name contains one, are run.
+ *
+ * @param {string[]} [filters] - module names or test-name substrings
+ */
+export async function run(filters = []) {
+    const selected = filters.length === 0 ? tests
+        : tests.filter(t => filters.some(f => t.module === f || t.name.includes(f)));
+    if (selected.length === 0) {
+        print(`no tests match ${JSON.stringify(filters)}`);
+        return 1;
+    }
     let failed = 0;
-    for (const {name, fn} of tests) {
+    for (const {name, fn} of selected) {
         try {
             // eslint-disable-next-line no-await-in-loop
             await fn();
@@ -50,7 +68,8 @@ export async function run() {
             print(`FAIL ${name}\n     ${e}\n${e.stack ?? ''}`);
         }
     }
-    print(`\n${tests.length - failed}/${tests.length} passed`);
+    print(`\n${selected.length - failed}/${selected.length} passed` +
+        (selected.length < tests.length ? ` (selected from ${tests.length})` : ''));
     return failed;
 }
 

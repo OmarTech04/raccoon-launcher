@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Static and unit checks that run outside GNOME Shell.
 #
-# Usage: tools/check.sh [schema|syntax|unit|pack|all]   (default: all)
+# Usage: tools/check.sh [schema|syntax|unit [FILTER...]|pack|all]   (default: all)
 #
 # Needs: gjs, glib-compile-schemas, gnome-extensions, unzip, and Mutter's
 # typelibs (package "mutter", installed with GNOME Shell) for the unit tests.
@@ -31,7 +31,7 @@ check_syntax() {
 
 check_unit() {
     echo "== unit tests"
-    gjs -m tests/unit/run.js
+    gjs -m tests/unit/run.js "$@"
 }
 
 check_pack() {
@@ -65,7 +65,7 @@ status=0
 case "${1:-all}" in
     schema) check_schema || status=1 ;;
     syntax) check_syntax || status=1 ;;
-    unit) check_unit || status=1 ;;
+    unit) shift; check_unit "$@" || status=1 ;;
     pack) check_pack || status=1 ;;
     all)
         check_schema || status=1

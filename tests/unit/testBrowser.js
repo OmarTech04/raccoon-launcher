@@ -1,7 +1,9 @@
-import {test, assert, assertEqual, assertDeepEqual} from './harness.js';
+import {module, test, assert, assertEqual, assertDeepEqual} from './harness.js';
 import {
     AI_ENTRY_URL, BrowserLauncher, buildAiUrl, buildBrowserArgv, isFirefoxAppId,
 } from '../../lib/browser.js';
+
+module('browser');
 
 test('AI URL uses the supplied Temporary Chat entry and percent-encodes the prompt', () => {
     assertEqual(AI_ENTRY_URL, 'https://chatgpt.com/?temporary-chat=true');

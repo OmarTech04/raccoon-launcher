@@ -1,8 +1,10 @@
 import Clutter from 'gi://Clutter';
 import Meta from 'gi://Meta';
 
-import {test, assert, assertEqual, assertDeepEqual, assertRejects} from './harness.js';
+import {module, test, assert, assertEqual, assertDeepEqual, assertRejects} from './harness.js';
 import {AiWindowController, AiCancelledError, centeredRect} from '../../lib/aiWindow.js';
+
+module('ai');
 
 // --- fakes ------------------------------------------------------------------
 

@@ -17,7 +17,9 @@
 # D-Bus session bus, its own Wayland display. The sandbox is deleted
 # afterwards unless the test fails or RACCOON_KEEP_SANDBOX=1.
 #
-# Usage:  tools/smoketest.sh [--firefox]
+# Usage:  tools/smoketest.sh [--firefox] [--only=GROUP[,GROUP...]]
+#         Groups: overlay, lifecycle, folders, copy (default: all of them;
+#         --firefox adds the Firefox group).
 # Exit:   0 on PASS, 1 on FAIL.
 
 set -u
@@ -27,10 +29,14 @@ DRIVER="raccoon-test-driver@local"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 FIREFOX=0
 TIMEOUT=120
-if [ "${1:-}" = "--firefox" ]; then
-    FIREFOX=1
-    TIMEOUT=360
-fi
+ONLY=""
+for arg in "$@"; do
+    case "$arg" in
+        --firefox) FIREFOX=1; TIMEOUT=360 ;;
+        --only=*) ONLY="${arg#--only=}" ;;
+        *) echo "usage: $0 [--firefox] [--only=GROUP[,GROUP...]]" >&2; exit 2 ;;
+    esac
+done
 
 SB="$(mktemp -d "${TMPDIR:-/tmp}/rl-smoketest.XXXXXX")"
 HOME_DIR="$SB/home"
@@ -76,6 +82,11 @@ cp -r "$SRC/tests/shell/driver" "$DATA/gnome-shell/extensions/$DRIVER"
     : >"Report 2024.pdf"; : >notes.md; : >"تقرير مالي.txt"; : >.hidden-report.txt
     : >".secret/report-inside-hidden.txt"; : >"Documents/sub dir/deep report.odt"
     for i in $(seq -w 1 25); do : >"many/file-$i.txt"; done
+    # Folder-search fixture: matching folders, matching files, hidden and
+    # symlinked folders.
+    mkdir -p Projects "Work/Client Projects" "تقارير/مشاريع" ".hidden-stuff/projects-hidden"
+    : >projects-plan.txt; : >"Work/projects-budget.ods"
+    ln -s Work projects-link
 )
 
 if [ "$FIREFOX" = 1 ]; then
@@ -125,7 +136,7 @@ echo "Starting headless GNOME Shell (sandbox $SB)..."
 setsid env \
     HOME="$HOME_DIR" XDG_DATA_HOME="$DATA" XDG_CONFIG_HOME="$HOME_DIR/.config" \
     XDG_CACHE_HOME="$SB/cache" XDG_RUNTIME_DIR="$SB/run" \
-    RACCOON_TEST_OUT="$OUT" RACCOON_TEST_FIREFOX="$FIREFOX" \
+    RACCOON_TEST_OUT="$OUT" RACCOON_TEST_FIREFOX="$FIREFOX" RACCOON_TEST_ONLY="$ONLY" \
     RACCOON_TEST_PAGES="$SRC/tests/shell/pages" \
     MOZ_ENABLE_WAYLAND=1 MOZ_LEGACY_PROFILES=1 MOZ_CRASHREPORTER_DISABLE=1 \
     SHELL_DEBUG="${SHELL_DEBUG:-}" G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-}" \

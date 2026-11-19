@@ -37,6 +37,7 @@ export default class RaccoonLauncherPrefs extends ExtensionPreferences {
         addToggle('enable-system', 'System actions', 'Lock, log out, suspend, restart, power off');
         addToggle('enable-ai', 'AI mode', 'Type "c " and a question; Enter opens a ChatGPT Temporary Chat in Firefox');
         addToggle('enable-files', 'File search', 'Type "ff " and part of a filename to search your home folder');
+        addToggle('enable-folders', 'Folder search', 'Type "/" and part of a folder name to search your home folder');
 
         // --- Behaviour --------------------------------------------------
         const behaviour = new Adw.PreferencesGroup({title: 'Behaviour'});

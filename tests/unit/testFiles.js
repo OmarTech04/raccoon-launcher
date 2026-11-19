@@ -1,8 +1,10 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {test, assert, assertEqual, assertRejects} from './harness.js';
+import {module, test, assert, assertEqual, assertRejects} from './harness.js';
 import {FilesProvider} from '../../lib/providers/files.js';
+
+module('files');
 
 // Fixture: a temporary directory standing in for $HOME. Never the real home.
 let ROOT = null;
@@ -50,6 +52,21 @@ function setUp() {
     symlink('report-final.txt', 'link-report.txt');
     for (let i = 0; i < 30; i++)
         write(`many/file-${String(i).padStart(2, '0')}-report.txt`);
+
+    // Folder-mode fixtures: matching folders mixed with many matching files.
+    mkdir('docs/projects');                          // exact folder name
+    mkdir('work/clients/Projects Alpha');            // below non-matching parents
+    mkdir('My Projects');                            // space in the name
+    mkdir('تقارير/مشاريع');                          // Arabic folders
+    write('projects-plan.txt');
+    write('projects-todo.md');
+    for (let i = 0; i < 12; i++)
+        write(`many/projects-${String(i).padStart(2, '0')}.txt`);
+    mkdir('.cache/projects-hidden-ancestor/projects-deeper');
+    mkdir('.projects-hidden');
+    symlink('work', 'projects-link');                // dir symlink with a matching name
+    symlink(OUTSIDE, 'linked-outside');              // dir symlink leading outside
+    GLib.mkdir_with_parents(`${OUTSIDE}/projects-outside`, 0o755);
 }
 
 function rmrf(path) {
@@ -176,4 +193,86 @@ test('files: traversal limits mark results incomplete', async () => {
 test('files: empty query returns nothing without traversing', async () => {
     const r = await provider().query('   ', {limit: 5});
     assertEqual(r.length, 0);
+});
+
+// --- folder mode (directoriesOnly) -------------------------------------------
+
+const FOLDERS = {directoriesOnly: true};
+
+test('folders: only real directories are returned', async () => {
+    const r = await provider().query('projects', {limit: 20, ...FOLDERS});
+    const names = r.map(x => x.name).sort();
+    assertEqual(JSON.stringify(names),
+        JSON.stringify(['My Projects', 'Projects Alpha', 'projects'].sort()), names);
+    for (const x of r) {
+        const info = Gio.File.new_for_uri(x.uri).query_info('standard::type',
+            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
+        assertEqual(info.get_file_type(), Gio.FileType.DIRECTORY, x.name);
+    }
+});
+
+test('folders: matching files do not take result slots', async () => {
+    // 14 matching files, 3 matching folders; with limit 3 all 3 folders fit.
+    const r = await provider().query('projects', {limit: 3, ...FOLDERS});
+    assertEqual(r.length, 3);
+    assert(r.every(x => !x.name.endsWith('.txt') && !x.name.endsWith('.md')),
+        r.map(x => x.name).join('|'));
+});
+
+test('folders: nested match found through non-matching parents, with its path', async () => {
+    const r = await provider().query('alpha', {limit: 5, ...FOLDERS});
+    assertEqual(r.length, 1);
+    assertEqual(r[0].name, 'Projects Alpha');
+    assert(r[0].description.endsWith('/work/clients'), r[0].description);
+});
+
+test('folders: hidden ancestors, hidden folders and symlinks are excluded and not traversed', async () => {
+    const r = await provider().query('projects', {limit: 20, ...FOLDERS});
+    const names = r.map(x => x.name);
+    for (const bad of ['projects-hidden-ancestor', 'projects-deeper', '.projects-hidden',
+        'projects-link', 'projects-outside'])
+        assert(!names.includes(bad), `${bad} must be excluded: ${names}`);
+    const outside = await provider().query('outside', {limit: 20, ...FOLDERS});
+    assertEqual(outside.length, 0, 'symlinked directory not traversed');
+});
+
+test('folders: exact name ranks first; spaces and Arabic work; folder icon', async () => {
+    const p = provider();
+    const [top] = await p.query('projects', {limit: 3, ...FOLDERS});
+    assertEqual(top.name, 'projects');
+    assertEqual(top.gicon?.get_names?.()[0], 'folder');
+    const [spaced] = await p.query('my projects', {limit: 3, ...FOLDERS});
+    assertEqual(spaced.name, 'My Projects');
+    const ar = await p.query('مشاريع', {limit: 3, ...FOLDERS});
+    assertEqual(ar.length, 1);
+    assertEqual(ar[0].name, 'مشاريع');
+    assert(ar[0].description.endsWith('/تقارير'), ar[0].description);
+    const parent = await p.query('تقارير', {limit: 3, ...FOLDERS});
+    assertEqual(parent[0]?.name, 'تقارير');
+});
+
+test('folders: Enter opens the directory URI with the default handler', async () => {
+    const p = provider();
+    const [r] = await p.query('my projects', {limit: 1, ...FOLDERS});
+    r.activate();
+    assertEqual(p.launched.length, 1);
+    assertEqual(Gio.File.new_for_uri(p.launched[0]).get_path(), `${ROOT}/My Projects`);
+    assert(p.launched[0].includes('My%20Projects'), p.launched[0]);
+});
+
+test('folders: cancellation and incomplete metadata', async () => {
+    const c = new Gio.Cancellable();
+    c.cancel();
+    await assertRejects(provider().query('projects', {cancellable: c, limit: 5, ...FOLDERS}),
+        e => e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED));
+    const r = await provider({limits: {maxEntries: 5}}).query('projects', {limit: 5, ...FOLDERS});
+    assertEqual(r.incomplete, true);
+    assertEqual(typeof r.unreadable, 'number');
+});
+
+test('files: ff mode still returns files and folders for the same query', async () => {
+    const r = await provider().query('projects', {limit: 20});
+    const names = r.map(x => x.name);
+    assert(names.includes('projects-plan.txt') && names.includes('projects'), names.join('|'));
+    assert(names.includes('projects-link'), 'ff keeps listing symlinks by name (not followed)');
 });

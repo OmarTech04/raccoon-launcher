@@ -346,6 +346,140 @@ async function testOverlay(input) {
     check(a && !overlay.isOpen, 'toggle opens and closes');
 }
 
+// --- folder mode ("/") -------------------------------------------------------
+
+function isRealDirectory(uri) {
+    try {
+        return Gio.File.new_for_uri(uri).query_info('standard::type',
+            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
+            .get_file_type() === Gio.FileType.DIRECTORY;
+    } catch {
+        return false;
+    }
+}
+
+async function testFolders(input) {
+    const inst = ext().stateObj;
+    const overlay = inst._overlay;
+    const settings = inst._settings;
+    const files = inst._engine.filesProvider;
+    const calls = [];
+    const realQuery = files.query.bind(files);
+    files.query = (text, opts) => {
+        calls.push({text, directoriesOnly: !!opts?.directoriesOnly});
+        return realQuery(text, opts);
+    };
+    const launched = [];
+    const realLaunch = files._launchUri;
+    files._launchUri = uri => launched.push(uri);
+
+    try {
+        overlay.open();
+        await sleep(100);
+
+        // "/" switches immediately, shows guidance, and does not traverse.
+        await input.type('/');
+        await sleep(400);
+        check(overlay._modeBadge.visible && overlay._modeBadge.text === 'Folders' &&
+            overlay.has_style_class_name('raccoon-mode-folders') &&
+            overlay._results.length === 0 && /folder name/.test(overlay._hint.text) &&
+            calls.length === 0,
+        'folders: "/" switches to folder mode with guidance and no traversal',
+        `badge=${overlay._modeBadge.text} hint=${overlay._hint.text} calls=${calls.length}`);
+
+        // Typing is debounced into one directory-only search.
+        await input.type('projects');
+        check(overlay._hint.text.startsWith('Searching'), 'folders: loading feedback while searching');
+        let r = await results_(overlay);
+        await sleep(300);
+        check(calls.length === 1 && calls[0].text === 'projects' && calls[0].directoriesOnly,
+            'folders: typing is debounced into one directory-only search', JSON.stringify(calls));
+        const names = (r ?? []).map(x => x.name).sort();
+        check(JSON.stringify(names) === JSON.stringify(['Client Projects', 'Projects']) &&
+            r.every(x => isRealDirectory(x.uri)),
+        'folders: only real, non-hidden directories (no files, no symlinks)', names.join('|'));
+        const client = r?.find(x => x.name === 'Client Projects');
+        check(client?.description === '~/Work' && client?.gicon?.get_names?.()[0] === 'folder',
+            'folders: parent path and folder icon shown', `${client?.description}`);
+
+        // Navigation still works on folder results; Enter opens exactly once.
+        const before = overlay._selected;
+        await input.key(Clutter.KEY_Down);
+        check(overlay._selected === (before + 1) % r.length, 'folders: arrow navigation');
+        const target = overlay._results[overlay._selected];
+        await input.key(Clutter.KEY_Return);
+        await sleep(200);
+        check(launched.length === 1 && launched[0] === target.uri && !overlay.isOpen,
+            'folders: Enter opens the selected folder exactly once', launched.join(' '));
+        await input.key(Clutter.KEY_Return);
+        check(launched.length === 1, 'folders: second Enter after close does nothing');
+
+        // Arabic folder names.
+        overlay.open();
+        overlay._entry.set_text('/مشاريع');
+        r = await results_(overlay, x => x.length > 0 && x[0].name === 'مشاريع');
+        check(r && r[0].description === '~/تقارير', 'folders: Arabic folder name and path',
+            r?.map(x => `${x.name} ${x.description}`).join('|'));
+
+        // Switching between modes cancels and rejects stale results.
+        calls.length = 0;
+        overlay._entry.set_text('ff projects');
+        await sleep(250);
+        overlay._entry.set_text('/projects');
+        r = await results_(overlay, x => x.length > 0);
+        await sleep(600);
+        check(overlay._results.length > 0 && overlay._results.every(x => isRealDirectory(x.uri)),
+            'folders: ff → / switch shows only folder results',
+            overlay._results.map(x => x.name).join('|'));
+        overlay._entry.set_text('/projects plan');
+        await sleep(50);
+        overlay._entry.set_text('ff projects plan');
+        r = await results_(overlay, x => x.length > 0);
+        await sleep(600);
+        check(overlay._results.length === 1 && overlay._results[0].name === 'projects-plan.txt',
+            'folders: / → ff switch shows file results, stale folder search discarded',
+            overlay._results.map(x => x.name).join('|'));
+        overlay._entry.set_text('/projects');
+        await sleep(50);
+        overlay._entry.set_text('c hello');
+        await sleep(600);
+        check(overlay._results.length === 1 && overlay._results[0].id === 'ai-chatgpt',
+            'folders: switching to AI mode cancels the pending folder search');
+        overlay._entry.set_text('/');
+        await sleep(400);
+        check(overlay._results.length === 0 && /folder name/.test(overlay._hint.text),
+            'folders: back to "/" clears results and shows guidance');
+
+        // Independent setting, live refresh.
+        overlay._entry.set_text('/projects');
+        await results_(overlay, x => x.length > 0);
+        settings.set_boolean('enable-folders', false);
+        await sleep(300);
+        check(overlay._results.length === 0 && /Folder search is turned off/.test(overlay._hint.text),
+            'folders: disabling the setting refreshes to a disabled state', overlay._hint.text);
+        overlay._entry.set_text('ff projects plan');
+        r = await results_(overlay, x => x.length > 0);
+        check(r?.[0]?.name === 'projects-plan.txt', 'folders: file mode unaffected by the folder setting');
+        settings.set_boolean('enable-files', false);
+        overlay._entry.set_text('/projects');
+        await sleep(300);
+        check(/Folder search is turned off/.test(overlay._hint.text) && overlay._results.length === 0,
+            'folders: disabled folder mode does not fall back');
+        settings.reset('enable-files');
+        settings.set_boolean('enable-folders', true);
+        r = await results_(overlay, x => x.length > 0);
+        check(r && r.every(x => isRealDirectory(x.uri)),
+            'folders: re-enabling refreshes the open launcher with folder results');
+        settings.reset('enable-folders');
+        overlay.close();
+    } finally {
+        delete files.query;
+        files._launchUri = realLaunch;
+        settings.reset('enable-folders');
+        settings.reset('enable-files');
+    }
+}
+
 async function testLifecycle() {
     const inst = ext().stateObj;
     const baseModal = Main.modalCount;
@@ -565,12 +699,25 @@ export default class RaccoonTestDriver extends Extension {
             Main.modalCount === 0, 15000);
         await sleep(300);
 
+        // RACCOON_TEST_ONLY=group,group selects scenario groups (default: all).
+        const only = (GLib.getenv('RACCOON_TEST_ONLY') ?? '').split(',').filter(Boolean);
+        const want = group => only.length === 0 || only.includes(group);
+        const groups = [
+            ['overlay', testOverlay],
+            ['folders', testFolders],
+            ['lifecycle', testLifecycle],
+        ];
+
         const input = new Input();
         try {
-            await testOverlay(input);
-            flush(false);
-            await testLifecycle();
-            flush(false);
+            for (const [name, fn] of groups) {
+                if (!want(name))
+                    continue;
+                console.log(`RACCOON_TEST group ${name}`);
+                // eslint-disable-next-line no-await-in-loop
+                await fn(input);
+                flush(false);
+            }
             if (GLib.getenv('RACCOON_TEST_FIREFOX') === '1')
                 await testFirefox(input);
         } catch (e) {

@@ -50,6 +50,13 @@
       home directory (hidden files and folders are skipped).</description>
     </key>
 
+    <key name="enable-folders" type="b">
+      <default>true</default>
+      <summary>Enable folder search</summary>
+      <description>Typing "/" followed by a folder name searches folders in
+      the home directory (hidden folders are skipped).</description>
+    </key>
+
     <key name="max-results" type="i">
       <default>8</default>
       <range min="3" max="20"/>

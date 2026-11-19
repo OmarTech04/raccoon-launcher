@@ -102,6 +102,22 @@
     background-color: rgba(90, 120, 230, 0.85);
 }
 
+.raccoon-box.raccoon-mode-folders {
+    border-color: rgba(230, 170, 60, 0.7);
+}
+
+.raccoon-mode-folders .raccoon-mode-badge {
+    background-color: rgba(200, 140, 40, 0.85);
+}
+
+.raccoon-box.raccoon-mode-folders {
+    border-color: rgba(230, 170, 60, 0.7);
+}
+
+.raccoon-mode-folders .raccoon-mode-badge {
+    background-color: rgba(200, 140, 40, 0.85);
+}
+
 .raccoon-hint {
     margin-top: 8px;
     padding: 0 4px;
