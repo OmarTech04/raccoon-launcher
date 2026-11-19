@@ -9,6 +9,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ExtensionState} from 'resource:///org/gnome/shell/misc/extensionUtils.js';
@@ -90,6 +91,17 @@ class Input {
             await this.key(Clutter.unicode_to_keysym(ch.codePointAt(0)));
     }
 
+    async combo(mods, keyval) {
+        let t = GLib.get_monotonic_time();
+        for (const m of mods)
+            this.kbd.notify_keyval(t++, m, Clutter.KeyState.PRESSED);
+        this.kbd.notify_keyval(t++, keyval, Clutter.KeyState.PRESSED);
+        this.kbd.notify_keyval(t++, keyval, Clutter.KeyState.RELEASED);
+        for (const m of [...mods].reverse())
+            this.kbd.notify_keyval(t++, m, Clutter.KeyState.RELEASED);
+        await sleep(80);
+    }
+
     async click(x, y) {
         const t = GLib.get_monotonic_time();
         this.ptr.notify_absolute_motion(t, x, y);
@@ -103,6 +115,22 @@ class Input {
         this.kbd.run_dispose();
         this.ptr.run_dispose();
     }
+}
+
+// Start every scenario group from a known state: pointer in the middle of
+// the screen (away from edges and hot corners), overview hidden, no grab.
+async function settle(input) {
+    const wa = Main.layoutManager.getWorkAreaForMonitor(global.display.get_current_monitor());
+    input.ptr.notify_absolute_motion(GLib.get_monotonic_time(),
+        wa.x + wa.width / 2, wa.y + wa.height / 2);
+    await sleep(100);
+    if (Main.overview.visible) {
+        console.log('RACCOON_TEST note: overview was visible before a group; hiding it');
+        Main.overview.hide();
+    }
+    await waitFor(() => !Main.overview.visible && !Main.overview.animationInProgress &&
+        Main.modalCount === 0, 10000);
+    await sleep(200);
 }
 
 function ext() {
@@ -389,7 +417,9 @@ async function testFolders(input) {
 
         // Typing is debounced into one directory-only search.
         await input.type('projects');
-        check(overlay._hint.text.startsWith('Searching'), 'folders: loading feedback while searching');
+        check(overlay._hint.text.startsWith('Searching'), 'folders: loading feedback while searching',
+            `entry=${JSON.stringify(overlay._entry.get_text())} hint=${overlay._hint.text} ` +
+            `keyFocus=${global.stage.key_focus} modal=${Main.modalCount}`);
         let r = await results_(overlay);
         await sleep(300);
         check(calls.length === 1 && calls[0].text === 'projects' && calls[0].directoriesOnly,
@@ -478,6 +508,212 @@ async function testFolders(input) {
         settings.reset('enable-folders');
         settings.reset('enable-files');
     }
+}
+
+// --- copy filesystem results ----------------------------------------------------
+// The sandbox shell has its own compositor and clipboard; the user's real
+// clipboard is never touched.
+
+const MIME = 'x-special/gnome-copied-files';
+
+function clipboardMimes() {
+    return St.Clipboard.get_default().get_mimetypes(St.ClipboardType.CLIPBOARD) ?? [];
+}
+
+function readClipboard(mime) {
+    return new Promise(resolve => St.Clipboard.get_default().get_content(
+        St.ClipboardType.CLIPBOARD, mime,
+        (_c, bytes) => resolve(bytes ? new TextDecoder().decode(bytes.toArray()) : null)));
+}
+
+function readClipboardText() {
+    return new Promise(resolve => St.Clipboard.get_default().get_text(
+        St.ClipboardType.CLIPBOARD, (_c, text) => resolve(text)));
+}
+
+async function clickActor(input, actor) {
+    const [x, y] = actor.get_transformed_position();
+    const [w, h] = actor.get_transformed_size();
+    await input.click(x + w / 2, y + h / 2);
+}
+
+const CTRL_SHIFT = [Clutter.KEY_Control_L, Clutter.KEY_Shift_L];
+
+async function testCopy(input) {
+    const inst = ext().stateObj;
+    const overlay = inst._overlay;
+    const files = inst._engine.filesProvider;
+    const launched = [];
+    const realLaunch = files._launchUri;
+    files._launchUri = uri => launched.push(uri);
+    St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, 'sentinel');
+
+    try {
+        // Click the Copy button of a file result.
+        overlay.open();
+        overlay._entry.set_text('ff projects plan');
+        let r = await results_(overlay, x => x.length === 1 && x[0].name === 'projects-plan.txt');
+        await sleep(300);
+        const row = overlay._resultsBox.get_child_at_index(0);
+        const copyBtn = row?.get_last_child();
+        check(row?.has_style_class_name('raccoon-result-row') &&
+            copyBtn?.has_style_class_name('raccoon-copy-button') &&
+            row.get_n_children() === 2 && row.has_style_class_name('selected'),
+        'copy: file result row = open button + sibling Copy button, still selectable');
+        await clickActor(input, copyBtn);
+        await sleep(200);
+        let payload = await readClipboard(MIME);
+        check(payload === `copy\n${r[0].uri}`, 'copy: Copy button puts the file on the clipboard',
+            JSON.stringify(payload));
+        check(clipboardMimes().includes(MIME), 'copy: clipboard advertises x-special/gnome-copied-files',
+            clipboardMimes().join(','));
+        check(launched.length === 0 && overlay.isOpen, 'copy: clicking Copy does not open and keeps the launcher open',
+            `launched=${launched.length} open=${overlay.isOpen}`);
+        check(overlay._hint.visible && /Copied/.test(overlay._hint.text) &&
+            /paste in Files/.test(overlay._hint.text) && overlay._hint.has_style_class_name('success'),
+        'copy: success feedback shown', overlay._hint.text);
+
+        // Keyboard shortcut on the selected folder result.
+        overlay._entry.set_text('/projects');
+        r = await results_(overlay, x => x.length === 2);
+        await sleep(300);
+        await input.key(Clutter.KEY_Down);
+        const selected = overlay._results[overlay._selected];
+        await input.combo(CTRL_SHIFT, Clutter.KEY_c);
+        await sleep(200);
+        payload = await readClipboard(MIME);
+        check(overlay._selected === 1 && payload === `copy\n${selected.uri}`,
+            'copy: Ctrl+Shift+C copies the selected folder result', JSON.stringify(payload));
+        check(launched.length === 0 && overlay.isOpen && /Copied/.test(overlay._hint.text),
+            'copy: shortcut keeps the launcher open with feedback, nothing opened');
+        check(overlay._entry.get_text() === '/projects', 'copy: shortcut does not type into the entry',
+            overlay._entry.get_text());
+
+        // A copy failure is reported and leaves the clipboard alone.
+        const victim = overlay._results[0];
+        const goodUri = victim.uri;
+        const goodName = victim.name;
+        victim.uri = 'file:///broken\nfile:///injected';
+        victim.name = 'expected test failure';   // its logged error is filtered by smoketest.sh
+        overlay._selected = 0;
+        await input.combo(CTRL_SHIFT, Clutter.KEY_c);
+        await sleep(200);
+        payload = await readClipboard(MIME);
+        check(payload === `copy\n${selected.uri}` && overlay._hint.has_style_class_name('error') &&
+            launched.length === 0,
+        'copy: invalid URI is rejected with an error, clipboard unchanged, nothing opened',
+            overlay._hint.text);
+        victim.uri = goodUri;
+        victim.name = goodName;
+
+        // Non-filesystem results: no Copy button, shortcut not consumed.
+        overlay._entry.set_text('2+3');
+        r = await results_(overlay, x => x[0]?.id === 'calc');
+        await sleep(100);
+        const calcRow = overlay._resultsBox.get_child_at_index(0);
+        check(calcRow instanceof St.Button && !calcRow.has_style_class_name('raccoon-result-row'),
+            'copy: other result types keep a plain row without Copy');
+        await input.combo(CTRL_SHIFT, Clutter.KEY_c);
+        await sleep(200);
+        payload = await readClipboard(MIME);
+        check(payload === `copy\n${selected.uri}` && overlay.isOpen && !/Copied/.test(overlay._hint.text ?? ''),
+            'copy: Ctrl+Shift+C on a non-file result does nothing');
+
+        // Plain Ctrl+C still copies the entry's selected text.
+        overlay._entry.set_text('ff copy text');
+        overlay._entry.clutter_text.set_selection(0, -1);
+        await input.combo([Clutter.KEY_Control_L], Clutter.KEY_c);
+        await sleep(200);
+        const text = await readClipboardText();
+        check(text === 'ff copy text', 'copy: Ctrl+C still copies entry text', JSON.stringify(text));
+        // ...and Ctrl+V pastes it back.
+        overlay._entry.set_text('');
+        await input.combo([Clutter.KEY_Control_L], Clutter.KEY_v);
+        await sleep(300);
+        check(overlay._entry.get_text() === 'ff copy text', 'copy: Ctrl+V still pastes into the entry',
+            overlay._entry.get_text());
+
+        // Clicking the main part of a file row still opens it, once.
+        overlay._entry.set_text('ff projects plan');
+        r = await results_(overlay, x => x.length === 1 && x[0].name === 'projects-plan.txt');
+        await sleep(300);
+        // Put this file on the clipboard; checked again after closing below.
+        await input.combo(CTRL_SHIFT, Clutter.KEY_c);
+        const main = overlay._resultsBox.get_child_at_index(0).get_first_child();
+        await clickActor(input, main);
+        await sleep(200);
+        check(launched.length === 1 && launched[0] === r[0].uri && !overlay.isOpen,
+            'copy: clicking the result itself opens it exactly once', launched.join(' '));
+
+        // The file stays on the clipboard after the launcher closes.
+        payload = await readClipboard(MIME);
+        check(payload === `copy\n${r[0].uri}`, 'copy: clipboard content remains after closing',
+            JSON.stringify(payload));
+    } finally {
+        files._launchUri = realLaunch;
+        overlay.close();
+    }
+}
+
+// --- paste in GNOME Files (opt-in: --only=paste) ------------------------------
+
+async function testPaste(input) {
+    const inst = ext().stateObj;
+    const overlay = inst._overlay;
+    const home = GLib.get_home_dir();
+    const srcDir = `${home}/paste-src`;
+    const dstDir = `${home}/paste-dest`;
+    const name = 'source file تجربة (1).txt';
+    const contents = `raccoon paste test ${GLib.get_real_time()}\n`;
+    GLib.mkdir_with_parents(srcDir, 0o755);
+    GLib.mkdir_with_parents(dstDir, 0o755);
+    GLib.file_set_contents(`${srcDir}/${name}`, contents);
+
+    // Copy through the launcher's real UI.
+    overlay.open();
+    overlay._entry.set_text('ff source file تجربة');
+    const r = await results_(overlay, x => x.length === 1);
+    await sleep(300);
+    await clickActor(input, overlay._resultsBox.get_child_at_index(0).get_last_child());
+    await sleep(200);
+    check(r && /Copied/.test(overlay._hint.text), 'paste: file copied through the launcher');
+    overlay.close();
+
+    // Open the destination in GNOME Files and paste with Ctrl+V.
+    Gio.Subprocess.new(['nautilus', '--new-window', dstDir], Gio.SubprocessFlags.NONE);
+    const win = await waitFor(() => global.display.list_all_windows()
+        .find(w => /paste-dest/.test(w.get_title() ?? '')), 30000, 200);
+    if (!check(win, 'paste: GNOME Files window opened on the destination'))
+        return;
+    const dst = `${dstDir}/${name}`;
+    let attempts = 0;
+    while (attempts < 3 && !GLib.file_test(dst, GLib.FileTest.EXISTS)) {
+        attempts++;
+        Main.activateWindow(win);
+        // eslint-disable-next-line no-await-in-loop
+        await waitFor(() => global.display.focus_window === win, 3000);
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(1500);
+        // eslint-disable-next-line no-await-in-loop
+        await input.combo([Clutter.KEY_Control_L], Clutter.KEY_v);
+        // eslint-disable-next-line no-await-in-loop
+        await waitFor(() => GLib.file_test(dst, GLib.FileTest.EXISTS), 8000, 200);
+    }
+    await sleep(1000);
+    const [okDst, dstBytes] = GLib.file_test(dst, GLib.FileTest.EXISTS)
+        ? GLib.file_get_contents(dst) : [false, null];
+    const [okSrc, srcBytes] = GLib.file_get_contents(`${srcDir}/${name}`);
+    const dec = b => new TextDecoder().decode(b);
+    check(okDst && dec(dstBytes) === contents, 'paste: GNOME Files pasted a copy with identical contents',
+        `attempts=${attempts} exists=${okDst}`);
+    check(okSrc && dec(srcBytes) === contents, 'paste: the original is intact (copy, not move)');
+    const extra = [];
+    const e = Gio.File.new_for_path(dstDir).enumerate_children('standard::name', 0, null);
+    let i;
+    while ((i = e.next_file(null)))
+        extra.push(i.get_name());
+    check(extra.length === 1, 'paste: exactly one file pasted', extra.join('|'));
+    win.delete(global.display.get_current_time_roundtrip());
 }
 
 async function testLifecycle() {
@@ -701,10 +937,14 @@ export default class RaccoonTestDriver extends Extension {
 
         // RACCOON_TEST_ONLY=group,group selects scenario groups (default: all).
         const only = (GLib.getenv('RACCOON_TEST_ONLY') ?? '').split(',').filter(Boolean);
-        const want = group => only.length === 0 || only.includes(group);
+        // "paste" launches GNOME Files, so it only runs when asked for.
+        const OPT_IN = new Set(['paste']);
+        const want = group => only.length === 0 ? !OPT_IN.has(group) : only.includes(group);
         const groups = [
             ['overlay', testOverlay],
             ['folders', testFolders],
+            ['copy', testCopy],
+            ['paste', testPaste],
             ['lifecycle', testLifecycle],
         ];
 
@@ -714,6 +954,8 @@ export default class RaccoonTestDriver extends Extension {
                 if (!want(name))
                     continue;
                 console.log(`RACCOON_TEST group ${name}`);
+                // eslint-disable-next-line no-await-in-loop
+                await settle(input);
                 // eslint-disable-next-line no-await-in-loop
                 await fn(input);
                 flush(false);

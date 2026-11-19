@@ -19,7 +19,8 @@
 #
 # Usage:  tools/smoketest.sh [--firefox] [--only=GROUP[,GROUP...]]
 #         Groups: overlay, lifecycle, folders, copy (default: all of them;
-#         --firefox adds the Firefox group).
+#         --firefox adds the Firefox group), and the opt-in "paste" group,
+#         which pastes a copied file in GNOME Files (nautilus) in the sandbox.
 # Exit:   0 on PASS, 1 on FAIL.
 
 set -u

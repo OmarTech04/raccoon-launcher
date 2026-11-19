@@ -10,6 +10,7 @@ import {run, runMain} from './harness.js';
 import './testQuerySearch.js';
 import './testBrowser.js';
 import './testAiWindow.js';
+import './testClipboard.js';
 import {tearDown} from './testFiles.js';
 
 const failed = runMain(async () => {

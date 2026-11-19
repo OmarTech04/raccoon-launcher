@@ -133,3 +133,37 @@
 .raccoon-hint.disabled {
     color: #ffb4a8;
 }
+
+/* Filesystem results: the row holds the open button and a sibling Copy button. */
+.raccoon-result-row {
+    spacing: 6px;
+}
+
+.raccoon-result-main {
+    padding: 0;
+    border-radius: 8px;
+}
+
+.raccoon-copy-button {
+    padding: 6px;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.raccoon-copy-button:hover,
+.raccoon-copy-button:focus {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.raccoon-copy-button:active {
+    background-color: rgba(255, 255, 255, 0.24);
+}
+
+.raccoon-copy-icon {
+    icon-size: 16px;
+}
+
+.raccoon-hint.success {
+    color: #a8e6b8;
+}
